@@ -19,6 +19,13 @@
 # 2021-01-11 | Support for osx arm64 added by Shawn Smith (https://github.com/HelixSpiral)
 # 2021-04-11 | Some Big Sur cleanup. Posting as 3.3
 
+# v3.4 | 2026-10-05 | be-bu fork: Homebrew/brew dropped the "master" branch, and
+#   brew now refuses to operate against it. Replaced the tarball-of-master
+#   bootstrap with a real `git clone` (default branch, i.e. "main"), since
+#   `brew update`/`brew doctor` require an actual git checkout. Also added a
+#   repair path for Macs that already have a tarball-based (non-git) install,
+#   since the "already installed" fast path never reached the install block.
+
 # Set up variables and functions here
 consoleuser=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ && ! /loginwindow/ { print $3 }' )
 UNAME_MACHINE="$(uname -m)"
@@ -42,7 +49,20 @@ else
     HOMEBREW_PREFIX="/usr/local"
 fi
 
-if [[ -e "${HOMEBREW_PREFIX}/bin/brew" ]]; then
+NEEDS_INSTALL=0
+if [[ ! -e "${HOMEBREW_PREFIX}/bin/brew" ]]; then
+    NEEDS_INSTALL=1
+elif [[ ! -d "${HOMEBREW_PREFIX}/Homebrew/.git" ]]; then
+    # Legacy install from the old tarball/master bootstrap - not a git repo,
+    # so brew update/doctor can't work. Clear it out and let the install
+    # block below re-clone it. This only touches brew's own code; installed
+    # formulae/casks live under Cellar/Caskroom/opt and are left alone.
+    NEEDS_INSTALL=1
+    rm -rf "${HOMEBREW_PREFIX}/Homebrew"
+    rm -f "${HOMEBREW_PREFIX}/bin/brew"
+fi
+
+if [[ $NEEDS_INSTALL -eq 0 ]]; then
     su -l "$consoleuser" -c "${HOMEBREW_PREFIX}/bin/brew update"
     exit 0
 fi
@@ -93,14 +113,15 @@ if [[ "$check" != 1 ]]; then
     /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
 fi
 
-# Is homebrew already installed?
-if [[ ! -e "${HOMEBREW_PREFIX}/bin/brew" ]]; then
+# Is homebrew already installed (and a valid git checkout)?
+if [[ $NEEDS_INSTALL -eq 1 ]]; then
     # Install Homebrew. This doesn't like being run as root so we must do this manually.
     logme "Installing Homebrew"
 
     mkdir -p "${HOMEBREW_PREFIX}/Homebrew"
-    # Curl down the latest tarball and install to ${HOMEBREW_PREFIX}/Homebrew
-    curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C "${HOMEBREW_PREFIX}/Homebrew"
+    # Clone brew's git repo (default branch, i.e. "main") into ${HOMEBREW_PREFIX}/Homebrew.
+    # brew update/doctor require a real git checkout, so this must be a clone, not a tarball.
+    git clone https://github.com/Homebrew/brew "${HOMEBREW_PREFIX}/Homebrew"
 
     # Manually make all the appropriate directories and set permissions
     mkdir -p "${HOMEBREW_PREFIX}/Cellar" "${HOMEBREW_PREFIX}/Homebrew"
